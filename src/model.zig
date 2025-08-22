@@ -63,7 +63,15 @@ pub fn chat(self: *Self, history: std.ArrayList(ai.Message)) !ai.Message {
     defer messages.deinit();
 
     try messages.append(.{.role = "system", .content = self.system});
-    try messages.appendSlice(history.items);
+    //try messages.appendSlice(history.items);
+    for (history.items) |next| {
+        if (std.mem.eql(u8, next.role, self.name)) {
+            try messages.append(.{.role = "assistant", .content = next.content});
+        }
+        else {
+            try messages.append(.{.role = "user", .content = next.content});
+        }
+    }
     const payload: ai.ChatPayload = .{
         .model = self.model,
         .messages = messages.items,
@@ -74,5 +82,5 @@ pub fn chat(self: *Self, history: std.ArrayList(ai.Message)) !ai.Message {
     const response = try self.openai.chat(payload, false);
     defer response.deinit();
 
-    return .{.role = "user", .content = try self.alloc.dupe(u8, strip(response.value.choices[response.value.choices.len-1].message.content))};
+    return .{.role = self.name, .content = try self.alloc.dupe(u8, strip(response.value.choices[response.value.choices.len-1].message.content))};
 }
