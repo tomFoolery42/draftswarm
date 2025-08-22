@@ -20,7 +20,7 @@ pub const Config = struct {
 };
 
 alloc:      Allocator,
-history:    std.ArrayList(String),
+history:    std.ArrayList(ai.Message),
 models:     std.ArrayList(Model),
 moderator:  Model,
 picker:     Model,
@@ -52,16 +52,17 @@ fn strip(str: []const u8) []const u8 {
 
 pub fn init(alloc: Allocator, config: Config) !Self {
     var models = std.ArrayList(Model).init(alloc);
-    for (config.models) |next| {
-        try models.append(try Model.init(alloc, next.url, next.model, next.temperature, config.system));
+    for (config.models, 0..config.models.len) |next, i| {
+        const model_name = try std.fmt.allocPrint(alloc, "model {d}", .{i});
+        try models.append(try Model.init(alloc, model_name, next.url, next.model, next.temperature, config.system));
     }
     return .{
         .alloc = alloc,
-        .history = std.ArrayList(String).init(alloc),
+        .history = std.ArrayList(ai.Message).init(alloc),
         .models = models,
-        .moderator = try Model.init(alloc, config.moderator.url, config.moderator.model, config.moderator.temperature, config.moderate),
-        .picker = try Model.init(alloc, config.moderator.url, config.moderator.model, config.moderator.temperature, config.picker_system),
-        .regen = try Model.init(alloc, config.moderator.url, config.moderator.model, config.moderator.temperature, config.regen_system),
+        .moderator = try Model.init(alloc, "moderator", config.moderator.url, config.moderator.model, config.moderator.temperature, config.moderate),
+        .picker = try Model.init(alloc, "picker", config.moderator.url, config.moderator.model, config.moderator.temperature, config.picker_system),
+        .regen = try Model.init(alloc, "regen", config.moderator.url, config.moderator.model, config.moderator.temperature, config.regen_system),
     };
 }
 
@@ -70,32 +71,28 @@ pub fn deinit(self: *Self) void {
 }
 
 pub fn processRequest(self: *Self, request: String) !String {
-    var responses: [4]String = undefined;
-
-    var prompt = request;
-    var pick: []const u8 = undefined;
+    var last_message: ai.Message = .{.role = "user", .content = request};
+    var pick: ai.Message = undefined;
     var deliberating = true;
     while (deliberating) {
-        defer {
-            for (responses) |response| {self.alloc.free(response);}
+        try self.history.append(last_message);
+        for (self.models.items) |*model| {
+            last_message = try model.chat(last_message);
+            try self.history.append(last_message);
         }
-
-        for (self.models.items, 0..self.models.items.len) |*model, i| {
-            responses[i] = try model.chat(prompt);
-            try self.history.append(responses[i]);
-        }
-        const agree_check = try self.moderator.moderate(&responses);
-        defer self.alloc.free(agree_check);
-        deliberating = std.mem.eql(u8, strip(agree_check), "Agree") == false;
-        std.log.debug("agree check: {s}", .{agree_check});
+        const agree_check = try self.moderator.moderate(self.history);
+        defer self.alloc.free(agree_check.content);
+        deliberating = std.mem.eql(u8, strip(agree_check.content), "Agree") == false;
+        std.log.debug("agree check: {s}", .{agree_check.content});
         std.log.debug("still deliberating: {any}", .{deliberating});
         if (deliberating) {
-            prompt = try self.regen.moderate(&responses);
+            last_message = try self.regen.moderate(self.history);
+            try self.history.append(last_message);
         }
         else {
-            pick = try self.picker.moderate(&responses);
+            pick = try self.picker.moderate(self.history);
         }
     }
 
-    return pick;
+    return pick.content;
 }

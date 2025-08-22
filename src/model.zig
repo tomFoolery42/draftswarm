@@ -12,11 +12,13 @@ pub const Config = struct {
     temperature:    f32,
 };
 
-alloc: Allocator,
-temp: f32,
-model: String,
-openai: ai.Client,
-system: String,
+alloc:      Allocator,
+history:    std.ArrayList(ai.Message),
+model:      String,
+name:       String,
+openai:     ai.Client,
+system:     String,
+temp:       f32,
 
 fn strip(str: String) String {
     var start: u16 = 0;
@@ -42,13 +44,17 @@ fn strip(str: String) String {
     return str[start..stop+1];
 }
 
-pub fn init(alloc: Allocator, url: String, model: String, temp: f32, system: String) !Self {
+pub fn init(alloc: Allocator, name: String, url: String, model: String, temp: f32, system: String) !Self {
+    var history = std.ArrayList(ai.Message).init(alloc);
+    try history.append(.{.role = "system", .content = system});
     return .{
         .alloc = alloc,
-        .temp = temp,
+        .history = history,
         .model = model,
+        .name = name,
         .openai = try ai.Client.init(alloc, url, "ollama", null),
         .system = system,
+        .temp = temp,
     };
 }
 
@@ -56,17 +62,12 @@ pub fn deinit(self: *Self) void {
     self.openai.deinit();
 }
 
-pub fn chat(self: *Self, request: String) !String {
-    std.log.debug("request: {s}", .{request});
-    var messages = std.ArrayList(ai.Message).init(self.alloc);
-    defer messages.deinit();
-
-    try messages.append(.{.role = "system", .content = self.system});
-    try messages.append(.{.role = "user", .content = request});
+pub fn chat(self: *Self, request: ai.Message) !ai.Message {
+    try self.history.append(request);
 
     const payload: ai.ChatPayload = .{
         .model = self.model,
-        .messages = messages.items,
+        .messages = self.history.items,
         .max_tokens = 10000,
         .temperature = self.temp,
     };
@@ -74,18 +75,15 @@ pub fn chat(self: *Self, request: String) !String {
     const response = try self.openai.chat(payload, false);
     defer response.deinit();
 
-    return self.alloc.dupe(u8, strip(response.value.choices[0].message.content));
+    return .{.role = self.name, .content = try self.alloc.dupe(u8, strip(response.value.choices[0].message.content))};
 }
 
-pub fn moderate(self: *Self, requests: []String) !String {
+pub fn moderate(self: *Self, history: std.ArrayList(ai.Message)) !ai.Message {
     var messages = std.ArrayList(ai.Message).init(self.alloc);
     defer messages.deinit();
 
     try messages.append(.{.role = "system", .content = self.system});
-    for (requests) |request| {
-        try messages.append(.{.role = "user", .content = request});
-    }
-
+    try messages.appendSlice(history.items);
     const payload: ai.ChatPayload = .{
         .model = self.model,
         .messages = messages.items,
@@ -96,5 +94,5 @@ pub fn moderate(self: *Self, requests: []String) !String {
     const response = try self.openai.chat(payload, false);
     defer response.deinit();
 
-    return self.alloc.dupe(u8, strip(response.value.choices[response.value.choices.len-1].message.content));
+    return .{.role = self.name, .content = try self.alloc.dupe(u8, strip(response.value.choices[response.value.choices.len-1].message.content))};
 }
