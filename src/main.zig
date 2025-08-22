@@ -21,25 +21,31 @@ fn debug(alloc: Allocator, stephen: *Hivemind) !void {
         try stdout.print(">", .{});
         const request = try stdin.readUntilDelimiter(&buffer, '\n');
 
-        const response = try stephen.processRequest(request);
+        const response = try stephen.processRequest(request, true);
         defer alloc.free(response);
         try stdout.print("Response: {s}\n", .{response});
     }
 }
 
 fn linupPick(alloc: Allocator, stephen: *Hivemind) !void {
-    const positions: [9]String = .{"Quarterback", "RunningBack", "Running Back", "Wide Receiver", "Wide Receiver", "Tight End", "Kicker", "Defense/special", "Flex"};
-    var picks: [9]String = undefined;
+    const positions:    [9]String = .{"Quarterback", "RunningBack", "Running Back", "Wide Receiver", "Wide Receiver", "Tight End", "Kicker", "Defense/special", "Flex"};
+    const strings:       [4]String = .{"First String", "Second String", "Rookie", "Underdog"};
+    var picks: [9*4]String = undefined;
     defer {
         for (picks) |next| {alloc.free(next);}
     }
 
-    for (positions, 0..positions.len) |next, i| {
-        const request = try std.fmt.allocPrint(alloc, "Please pick a First string {s}, second string {s} and a rookie {s}.", .{next, next, next});
-        defer alloc.free(request);
-        picks[i] = try stephen.processRequest(request);
+    for (positions, 0..positions.len) |position, i| {
+        for (strings, 0..strings.len) |string, j| {
+            const index = (i * strings.len) + j;
+            const request = try std.fmt.allocPrint(alloc, "Please pick a {s} {s} for a fantasy football draft", .{position, string});
+            picks[index] = try stephen.processRequest(request, false);
 
-        std.log.info("{s} pick is {s}", .{positions[i], picks[i]});
+        }
+    }
+
+    for (picks) |pick| {
+        std.log.info("{s}", .{pick});
     }
 }
 
@@ -54,4 +60,5 @@ pub fn main() !void {
     defer stephen.deinit();
 
     try linupPick(alloc, &stephen);
+    //try debug(alloc, &stephen);
 }

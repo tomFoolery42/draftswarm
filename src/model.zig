@@ -13,7 +13,6 @@ pub const Config = struct {
 };
 
 alloc:      Allocator,
-history:    std.ArrayList(ai.Message),
 model:      String,
 name:       String,
 openai:     ai.Client,
@@ -45,11 +44,8 @@ fn strip(str: String) String {
 }
 
 pub fn init(alloc: Allocator, name: String, url: String, model: String, temp: f32, system: String) !Self {
-    var history = std.ArrayList(ai.Message).init(alloc);
-    try history.append(.{.role = "system", .content = system});
     return .{
         .alloc = alloc,
-        .history = history,
         .model = model,
         .name = name,
         .openai = try ai.Client.init(alloc, url, "ollama", null),
@@ -62,23 +58,7 @@ pub fn deinit(self: *Self) void {
     self.openai.deinit();
 }
 
-pub fn chat(self: *Self, request: ai.Message) !ai.Message {
-    try self.history.append(request);
-
-    const payload: ai.ChatPayload = .{
-        .model = self.model,
-        .messages = self.history.items,
-        .max_tokens = 10000,
-        .temperature = self.temp,
-    };
-
-    const response = try self.openai.chat(payload, false);
-    defer response.deinit();
-
-    return .{.role = self.name, .content = try self.alloc.dupe(u8, strip(response.value.choices[0].message.content))};
-}
-
-pub fn moderate(self: *Self, history: std.ArrayList(ai.Message)) !ai.Message {
+pub fn chat(self: *Self, history: std.ArrayList(ai.Message)) !ai.Message {
     var messages = std.ArrayList(ai.Message).init(self.alloc);
     defer messages.deinit();
 
@@ -94,5 +74,5 @@ pub fn moderate(self: *Self, history: std.ArrayList(ai.Message)) !ai.Message {
     const response = try self.openai.chat(payload, false);
     defer response.deinit();
 
-    return .{.role = self.name, .content = try self.alloc.dupe(u8, strip(response.value.choices[response.value.choices.len-1].message.content))};
+    return .{.role = "user", .content = try self.alloc.dupe(u8, strip(response.value.choices[response.value.choices.len-1].message.content))};
 }
