@@ -8,8 +8,6 @@ const Self = @This();
 const String = []const u8;
 
 pub const Config = struct {
-    determine_agreement:    String,
-    determine_disagreement:  String,
     name:       String,
     models:     []Model.Config,
     moderate:   String,
@@ -70,28 +68,42 @@ pub fn deinit(self: *Self) void {
     self.models.deinit();
 }
 
-pub fn processRequest(self: *Self, request: String) !String {
-    var last_message: ai.Message = .{.role = "user", .content = request};
+pub fn processRequest(self: *Self, request: String, debug: bool) !String {
     var pick: ai.Message = undefined;
     var deliberating = true;
+    const max_rounds: u8 = 5;
+    var num_rounds: u8 = 0;
     while (deliberating) {
-        try self.history.append(last_message);
+        try self.history.append(.{.role = "user", .content = request});
         for (self.models.items) |*model| {
-            last_message = try model.chat(last_message);
+            if (debug) {
+                std.log.debug("input for {s}: {s}", .{model.name, self.history.items[self.history.items.len-1].content});
+            }
+            const last_message = try model.chat(self.history);
             try self.history.append(last_message);
+
+            if (debug) {
+                std.log.debug("output for {s}: {s}", .{model.name, self.history.items[self.history.items.len-1].content});
+            }
         }
-        const agree_check = try self.moderator.moderate(self.history);
+        const agree_check = try self.moderator.chat(self.history);
         defer self.alloc.free(agree_check.content);
         deliberating = std.mem.eql(u8, strip(agree_check.content), "Agree") == false;
         std.log.debug("agree check: {s}", .{agree_check.content});
         std.log.debug("still deliberating: {any}", .{deliberating});
         if (deliberating) {
-            last_message = try self.regen.moderate(self.history);
+            const last_message = try self.regen.chat(self.history);
             try self.history.append(last_message);
         }
         else {
-            pick = try self.picker.moderate(self.history);
+            pick = try self.picker.chat(self.history);
         }
+
+        if (num_rounds >= max_rounds) {
+            deliberating = false;
+            pick = try self.picker.chat(self.history);
+        }
+        num_rounds += 1;
     }
 
     return pick.content;
